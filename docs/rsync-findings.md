@@ -210,6 +210,41 @@ distinct `Untitled document.docx`. Google Drive permits same-named siblings;
 POSIX does not. rclone ignores the duplicates rather than corrupting either.
 Worth knowing if a file seems not to sync.
 
+**Seven files are refused by Google as "malware or spam"**, and one is enough to
+wedge syncing permanently. Found on the first real deployment, not in testing:
+
+```
+ERROR : Школьное Программирование/a02.rar: Failed to copy: failed to open
+        source object: open file failed: use the --drive-acknowledge-abuse flag
+        to download this file: googleapi: Error 403: This file has been
+        identified as malware or spam and cannot be downloaded.,
+        cannotDownloadAbusiveFile
+ERROR : Bisync critical error: failed to open source object: ...
+ERROR : Bisync aborted. Must run --resync to recover.
+```
+
+The affected files are old self-extracting archives and Delphi build output
+(`a02.rar`, `a04.rar`, `VCProjects.7z`, `Levlams.exe`, `Project1.exe`,
+`Iowa.exe`, `old_hdd.rar`). Google's scanner flags this kind of material
+aggressively.
+
+Two things make this worse than a skipped file:
+
+1. For bisync a per-file 403 escalates to a **critical error**. The run aborts
+   before renaming `*.lst-new` to `*.lst`, so no baseline is ever recorded.
+2. bisync then reports `Must run --resync to recover`, which reads like lost
+   state. Re-baselining hits the same files and fails identically — an
+   unbreakable loop. The first deployment sat in exactly this state.
+
+`--drive-acknowledge-abuse` fixes it; verified by downloading `VCProjects.7z`
+(4,978,362 bytes) which fails without the flag and succeeds with it. The app
+defaults `acknowledge_abuse = true` because the alternative is a client that
+cannot sync at all, and rclone only writes such files to disk.
+
+The parser now separates "the saved listings are genuinely gone" from "this run
+aborted on specific files", and names the files and the remedy rather than
+telling the user to re-baseline into the same wall.
+
 ---
 
 ## 8. Account identity and quota

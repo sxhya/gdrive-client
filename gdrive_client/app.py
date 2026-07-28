@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from . import account, autostart, engine as engine_mod, paths, rclone
@@ -14,6 +15,44 @@ from .config import CONFIG_PATH, Config
 from .parser import action_label
 
 log = logging.getLogger(__name__)
+
+
+def daemonize() -> None:
+    """Detach from the terminal so the shell prompt returns.
+
+    Standard double-fork: the first fork lets the parent exit, setsid() makes
+    the child a session leader detached from the controlling terminal, and the
+    second fork guarantees it can never reacquire one.  stdio is redirected to
+    the log file rather than closed, so a crash traceback is not lost.
+
+    Called after logging is set up but before any GTK or thread work, because
+    fork() in a process that already has threads or an X connection is not safe.
+    """
+    if os.fork() > 0:
+        os._exit(0)          # parent returns the shell prompt
+
+    os.setsid()
+
+    if os.fork() > 0:
+        os._exit(0)          # give up any chance of a controlling terminal
+
+    os.chdir("/")
+    os.umask(0o022)
+
+    target = paths.STATE_DIR / "app.log"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    except OSError:
+        out = os.open(os.devnull, os.O_WRONLY)
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(devnull, 0)
+    os.dup2(out, 1)
+    os.dup2(out, 2)
+    if devnull > 2:
+        os.close(devnull)
+    if out > 2:
+        os.close(out)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -191,7 +230,15 @@ def cmd_sync(cfg: Config, info: rclone.RcloneInfo, resync: bool, dry_run: bool) 
         return 1
 
     if not dry_run:
-        sync.status.last_success_at = sync.status.last_sync_at = __import__("time").time()
+        now = time.time()
+        sync.status.last_success_at = sync.status.last_sync_at = now
+        sync.status.state = engine_mod.State.IDLE
+        sync.status.message = result.message
+        sync.status.pending_conflicts = list(result.conflicts)
+        sync.status.blocked_files = []
+        # Persist so a tray started afterwards reports this run rather than
+        # claiming nothing has ever succeeded.
+        sync._persist_status()
         sync._write_baseline_marker()
         sync._record(result.changes)
     return 0
@@ -260,9 +307,20 @@ def main(argv: list[str] | None = None) -> int:
         description="Two-way Google Drive sync with a tray icon.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument(
+        "-f", "--foreground", action="store_true",
+        help="tray mode: stay attached to the terminal instead of detaching",
+    )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("tray", help="run the tray application (default)")
+    p_tray = sub.add_parser("tray", help="run the tray application (default)")
+    # argparse.SUPPRESS matters here: without it the subparser's own default
+    # would overwrite a --foreground given before the subcommand, so
+    # `gdrive-client -f tray` would silently detach anyway.
+    p_tray.add_argument(
+        "-f", "--foreground", action="store_true", default=argparse.SUPPRESS,
+        help="stay attached to the terminal instead of detaching",
+    )
     sub.add_parser("status", help="print current status and account info")
     sub.add_parser("explain", help="show how settings map to rsync/rclone flags")
     sub.add_parser("doctor", help="check the setup and report problems")
@@ -288,10 +346,30 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "tray"
 
     if command == "tray":
+        # Check the lock before forking so a duplicate launch reports on the
+        # terminal the user is looking at, then re-take it in the child because
+        # flock ownership does not survive the parent calling _exit().
+        try:
+            probe_lock = engine_mod._acquire_lock()
+        except engine_mod.AlreadyRunning as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 4
+        probe_lock.close()
+
+        if not getattr(args, "foreground", False):
+            print(f"gdrive-client: starting in the background, logging to "
+                  f"{paths.STATE_DIR / 'app.log'}")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            daemonize()
+            # Re-open the log handlers on the new fds.
+            setup_logging(args.verbose)
+            log.info("detached from the terminal (pid %d)", os.getpid())
+
         try:
             lock = engine_mod._acquire_lock()
         except engine_mod.AlreadyRunning as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            log.error("%s", exc)
             return 4
         try:
             return run_tray(cfg, info)

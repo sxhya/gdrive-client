@@ -39,6 +39,7 @@ _STATE_ICON = {
     State.NEEDS_RESYNC: "gdrive-client-attention",
     State.SAFETY_ABORT: "gdrive-client-attention",
     State.MISCONFIGURED: "gdrive-client-error",
+    State.BLOCKED: "gdrive-client-attention",
 }
 
 _STATE_TEXT = {
@@ -51,6 +52,7 @@ _STATE_TEXT = {
     State.NEEDS_RESYNC: "Needs re-baseline",
     State.SAFETY_ABORT: "Stopped for safety",
     State.MISCONFIGURED: "Not configured",
+    State.BLOCKED: "Some files could not sync",
 }
 
 

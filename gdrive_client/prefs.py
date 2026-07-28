@@ -277,6 +277,12 @@ class PreferencesDialog(Gtk.Window):
         self._add_row(grid, "Max file size", Gtk.Entry(), "max_size",
                       "e.g. 1G. Empty means no limit.")
         self._add_row(grid, "Keep symlinks as links", Gtk.Switch(), "preserve_symlinks")
+        self._add_row(grid, "Download Google-flagged files", Gtk.Switch(),
+                      "acknowledge_abuse",
+                      "Google's scanner flags harmless old .exe/.rar/.7z files and "
+                      "refuses to serve them. With this off, one such file aborts "
+                      "every sync and leaves it stuck asking for a re-baseline. "
+                      "rclone only writes them to disk; nothing is executed.")
 
         self._add_section(grid, "Exclude patterns (one per line)")
         view = Gtk.TextView()

@@ -135,6 +135,7 @@ reboot should not quietly resume it.
 | `resilient` / `recover` | `true` | Recover from transient errors without a manual re-baseline |
 | `compare` | `size,modtime` | `checksum` is safer but slow; `size-only` misses same-size edits |
 | `interval_minutes` | `15` | How often to sync |
+| `acknowledge_abuse` | `true` | Without it, one Google-flagged file wedges syncing permanently |
 
 ### rsync ↔ rclone mapping
 
@@ -157,7 +158,8 @@ transfers           (none - single stream)                  --transfers
 ## CLI
 
 ```console
-gdrive-client                  # run the tray (default)
+gdrive-client                  # run the tray (detaches; console returns)
+gdrive-client -f               # run the tray attached to the terminal
 gdrive-client sync             # sync once and exit
 gdrive-client sync --dry-run   # show what would change, change nothing
 gdrive-client sync --resync    # rebuild the baseline
@@ -166,7 +168,9 @@ gdrive-client doctor           # check the setup and report problems
 gdrive-client explain          # setting → rsync/rclone flag mapping
 ```
 
-A lock file prevents two instances syncing the same pair at once.
+Tray mode detaches from the terminal by default and logs to
+`~/.local/state/gdrive-client/app.log`; pass `-f`/`--foreground` to keep it
+attached. A lock file prevents two instances syncing the same pair at once.
 
 ---
 
@@ -224,6 +228,12 @@ They skip automatically if rclone ≥ 1.66 is not available.
 - **Duplicate names.** Drive allows two files with the same name in one folder;
   a filesystem does not. rclone logs `Duplicate object found in source -
   ignoring` and skips them rather than corrupting either.
+- **Google-flagged files.** Google refuses to serve files its scanner considers
+  malware or spam — in practice, old `.exe`, `.rar` and `.7z` material. For
+  bisync a single such file is not a skipped file: it aborts the whole run
+  before a baseline is written, and bisync then asks for a re-baseline that
+  hits the same file again. `acknowledge_abuse` defaults to `true` to break
+  that loop. Turn it off only if you also exclude the affected paths.
 - **bisync is not instant.** It polls on `interval_minutes` rather than watching
   the filesystem, so a change can wait up to that long. "Sync now" is there for
   when you don't want to wait.

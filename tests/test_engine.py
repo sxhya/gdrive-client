@@ -16,7 +16,14 @@ from gdrive_client.engine import SyncEngine, State
 
 
 def _find_rclone():
-    for candidate in (paths.BIN_DIR / "rclone", shutil.which("rclone")):
+    """Locate a bisync-capable rclone.
+
+    tests/__init__ redirects paths.BIN_DIR into a sandbox, so the app's real
+    download location has to be named explicitly here or these tests would
+    silently skip on a machine that does have a current rclone.
+    """
+    real_bin = Path.home() / ".local" / "share" / "gdrive-client" / "bin" / "rclone"
+    for candidate in (real_bin, paths.BIN_DIR / "rclone", shutil.which("rclone")):
         if not candidate:
             continue
         info = rclone.probe(candidate)
@@ -270,3 +277,47 @@ class PauseAndStateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(RCLONE, "needs rclone >= 1.66")
+class StatusPersistenceTest(unittest.TestCase):
+    """Timestamps survive a restart; a stale in-flight state must not."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="gdrive-status-"))
+        self._saved = paths.STATUS_FILE
+        paths.STATUS_FILE = self.root / "status.json"
+
+    def tearDown(self):
+        paths.STATUS_FILE = self._saved
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_timestamps_are_restored(self):
+        cfg = Config(remote="d:")
+        first = SyncEngine(cfg, RCLONE)
+        first.status.last_success_at = 1234567890.0
+        first.status.last_sync_at = 1234567899.0
+        first._persist_status()
+
+        second = SyncEngine(cfg, RCLONE)
+        self.assertEqual(second.status.last_success_at, 1234567890.0)
+        self.assertEqual(second.status.last_sync_at, 1234567899.0)
+
+    def test_stale_syncing_state_is_not_restored(self):
+        """A process killed mid-sync must not come back claiming to be syncing."""
+        cfg = Config(remote="d:")
+        first = SyncEngine(cfg, RCLONE)
+        first.status.state = State.SYNCING
+        first._persist_status()
+
+        second = SyncEngine(cfg, RCLONE)
+        self.assertIs(second.status.state, State.STARTING)
+
+    def test_missing_status_file_is_harmless(self):
+        engine = SyncEngine(Config(remote="d:"), RCLONE)
+        self.assertEqual(engine.status.last_success_at, 0.0)
+
+    def test_corrupt_status_file_is_harmless(self):
+        paths.STATUS_FILE.write_text("{not json", encoding="utf-8")
+        engine = SyncEngine(Config(remote="d:"), RCLONE)
+        self.assertEqual(engine.status.last_success_at, 0.0)

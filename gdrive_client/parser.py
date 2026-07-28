@@ -51,13 +51,30 @@ _SUMMARY_RE = re.compile(
 )
 
 _SUCCESS = "Bisync successful"
-_RESYNC_HINTS = (
+
+# bisync says "Must run --resync to recover" for two very different situations:
+# its saved listings really are gone, or the run aborted partway on something
+# else (usually a file it could not read).  Only the first is a state problem;
+# reporting the second as "sync data lost" hides the actual cause and sends the
+# user round a re-baseline loop that cannot succeed.
+_LISTING_LOST_HINTS = (
     "cannot find prior Path1 or Path2 listings",
+    "bisync listing not found",
+    "Bisync critical error: listing",
+)
+_RESYNC_DEMAND_HINTS = (
     "must run --resync",
     "Must run --resync",
     "run --resync to recover",
-    "bisync listing not found",
 )
+
+# ERROR : some/path.rar: Failed to copy: failed to open source object: ...
+_FILE_ERROR_RE = re.compile(
+    r"^(?P<path>.+?): (?:Failed to copy|Failed to move|Failed to update|"
+    r"Failed to set modification time): (?P<reason>.+)$"
+)
+# Google's scanner refuses to serve some files; rclone names the exact remedy.
+_ABUSE_MARKER = "cannotDownloadAbusiveFile"
 # bisync has two distinct safety aborts and they need different explanations:
 # one is about deletions exceeding --max-delete, the other fires when *every*
 # tracked file changed at once (a strong hint that a folder was moved or
@@ -106,8 +123,11 @@ class SyncResult:
     changes: list[Change] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     needs_resync: bool = False
+    listings_lost: bool = False          # the resync demand is a real state loss
     safety_abort: bool = False
-    safety_reason: str = ""      # "deletes" | "all-changed" | ""
+    safety_reason: str = ""              # "deletes" | "all-changed" | ""
+    file_errors: list[tuple[str, str]] = field(default_factory=list)
+    blocked_files: list[str] = field(default_factory=list)   # Google-flagged
     message: str = ""
     detected: dict = field(default_factory=dict)   # {"local": {...}, "remote": {...}}
     tail: list[str] = field(default_factory=list)
@@ -119,6 +139,12 @@ class SyncResult:
 
 def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
+
+
+# rclone labels a remote in its log with an internal instance id, so the same
+# remote appears as both 'drive:' and 'drive{P2dbo}:/'.  Observed on 1.74.4 in
+# the bisync "Queue copy to Path2" lines.
+_REMOTE_PREFIX_RE = re.compile(r"^[A-Za-z0-9_.+-]+(?:\{[^}]*\})?:/?")
 
 
 def _relativise(path: str, local_prefix: str, remote_prefix: str) -> str:
@@ -133,6 +159,17 @@ def _relativise(path: str, local_prefix: str, remote_prefix: str) -> str:
         for variant in (prefix.rstrip("/") + "/", prefix):
             if variant and path.startswith(variant):
                 return path[len(variant):].lstrip("/") or path
+
+    # Not one of the configured roots verbatim.  If it still looks like a remote
+    # spec, drop that prefix rather than showing the user 'drive{P2dbo}:/file'.
+    if not path.startswith("/"):
+        stripped = _REMOTE_PREFIX_RE.sub("", path, count=1)
+        if stripped and stripped != path:
+            # Re-strip a configured remote subpath, e.g. remote_path='Work'.
+            remote_sub = remote_prefix.split(":", 1)[1].strip("/") if ":" in remote_prefix else ""
+            if remote_sub and stripped.startswith(remote_sub + "/"):
+                stripped = stripped[len(remote_sub) + 1:]
+            return stripped
     return path
 
 
@@ -176,8 +213,22 @@ def parse_bisync_output(
             result.ok = True
             continue
 
-        if any(hint in body for hint in _RESYNC_HINTS):
+        if any(hint in body for hint in _RESYNC_DEMAND_HINTS):
             result.needs_resync = True
+        if any(hint in body for hint in _LISTING_LOST_HINTS):
+            result.needs_resync = True
+            result.listings_lost = True
+
+        if level in ("ERROR", "CRITICAL"):
+            file_error = _FILE_ERROR_RE.match(body)
+            if file_error:
+                path = _relativise(file_error.group("path"), local_prefix, remote_prefix)
+                reason = file_error.group("reason")
+                if (path, reason) not in result.file_errors:
+                    result.file_errors.append((path, reason))
+                if _ABUSE_MARKER in reason and path not in result.blocked_files:
+                    result.blocked_files.append(path)
+
         if any(hint in body for hint in _SAFETY_HINTS):
             result.safety_abort = True
         if any(hint in body for hint in _SAFETY_DELETE_HINTS):
@@ -234,8 +285,30 @@ def parse_bisync_output(
                 "Sync aborted by the safety limit: too large a share of files would "
                 "have been deleted. Nothing was changed."
             )
-        elif result.needs_resync:
+        elif result.blocked_files:
+            # Diagnose this before the resync demand: the demand is a symptom.
+            shown = ", ".join(result.blocked_files[:2])
+            extra = (f" and {len(result.blocked_files) - 2} more"
+                     if len(result.blocked_files) > 2 else "")
+            result.message = (
+                f"Google refused to serve {len(result.blocked_files)} file(s) it has "
+                f"flagged as unsafe ({shown}{extra}), which aborted the sync. "
+                "Enable 'Download Google-flagged files' in Preferences, or exclude them."
+            )
+        elif result.file_errors and not result.listings_lost:
+            first_path, first_reason = result.file_errors[0]
+            extra = (f" (and {len(result.file_errors) - 1} other file(s))"
+                     if len(result.file_errors) > 1 else "")
+            result.message = (
+                f"Sync stopped on {first_path}{extra}: {first_reason[:140]}"
+            )
+        elif result.listings_lost:
             result.message = "Sync needs a one-time full re-baseline (resync)."
+        elif result.needs_resync:
+            result.message = (
+                "The sync run did not finish, so it will re-baseline on the next "
+                "attempt. See the sync log for what stopped it."
+            )
         elif result.ok:
             count = result.change_count
             result.message = "Up to date." if count == 0 else f"Synced {count} change(s)."

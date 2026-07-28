@@ -128,6 +128,70 @@ class FailurePathTest(unittest.TestCase):
         self.assertEqual(result.message, "Up to date.")
 
 
+ABUSE_ABORT = """\
+2026/07/28 12:30:45 ERROR : Школьное Программирование/a02.rar: Failed to copy: failed to open source object: open file failed: use the --drive-acknowledge-abuse flag to download this file: googleapi: Error 403: This file has been identified as malware or spam and cannot be downloaded., cannotDownloadAbusiveFile
+2026/07/28 12:30:49 ERROR : Delphi/VCProjects.7z: Failed to copy: failed to open source object: open file failed: use the --drive-acknowledge-abuse flag to download this file: googleapi: Error 403: This file has been identified as malware or spam and cannot be downloaded., cannotDownloadAbusiveFile
+2026/07/28 12:31:55 ERROR : Bisync critical error: failed to open source object: open file failed: use the --drive-acknowledge-abuse flag to download this file: googleapi: Error 403: This file has been identified as malware or spam and cannot be downloaded., cannotDownloadAbusiveFile
+2026/07/28 12:31:55 ERROR : Bisync aborted. Must run --resync to recover.
+2026/07/28 12:31:55 NOTICE: Failed to bisync with 8 errors: last error was: bisync aborted
+"""
+
+
+class BlockedFileTest(unittest.TestCase):
+    """A Google-flagged file aborts the run; re-baselining cannot fix that.
+
+    This is the failure that wedged the first real deployment: the app reported
+    "sync data lost, needs re-baseline", the re-baseline hit the same files, and
+    it looped forever.
+    """
+
+    def setUp(self):
+        self.result = parse_bisync_output(ABUSE_ABORT)
+
+    def test_run_failed(self):
+        self.assertFalse(self.result.ok)
+
+    def test_blocked_files_identified(self):
+        self.assertEqual(
+            self.result.blocked_files,
+            ["Школьное Программирование/a02.rar", "Delphi/VCProjects.7z"],
+        )
+
+    def test_file_errors_captured(self):
+        self.assertEqual(len(self.result.file_errors), 2)
+        self.assertIn("cannotDownloadAbusiveFile", self.result.file_errors[0][1])
+
+    def test_resync_demanded_but_listings_are_not_lost(self):
+        """The distinction that stops the re-baseline loop."""
+        self.assertTrue(self.result.needs_resync)
+        self.assertFalse(self.result.listings_lost)
+
+    def test_message_names_the_cause_and_the_fix(self):
+        message = self.result.message
+        self.assertIn("flagged", message)
+        self.assertIn("a02.rar", message)
+        self.assertIn("Preferences", message)
+        # It must not claim the sync state was lost.
+        self.assertNotIn("re-baseline", message.lower())
+
+    def test_genuine_listing_loss_is_still_reported_as_such(self):
+        result = parse_bisync_output(NEEDS_RESYNC)
+        self.assertTrue(result.listings_lost)
+        self.assertIn("re-baseline", result.message.lower())
+        self.assertEqual(result.blocked_files, [])
+
+    def test_unfinished_run_without_blocked_files(self):
+        text = (
+            "2026/07/28 12:31:55 ERROR : some/file.bin: Failed to copy: "
+            "connection reset by peer\n"
+            "2026/07/28 12:31:55 ERROR : Bisync aborted. Must run --resync to recover.\n"
+        )
+        result = parse_bisync_output(text)
+        self.assertFalse(result.listings_lost)
+        self.assertEqual(result.blocked_files, [])
+        self.assertIn("some/file.bin", result.message)
+
+
 class AnsiTest(unittest.TestCase):
     def test_strip_ansi(self):
         self.assertEqual(strip_ansi("\x1b[36mPath1\x1b[0m"), "Path1")
@@ -173,6 +237,39 @@ class RelativisePathTest(unittest.TestCase):
         result = parse_bisync_output(text, local_prefix="/l", remote_prefix="d:")
         self.assertEqual(result.changes[0].path, "My Folder/some file name.pdf")
         self.assertEqual(result.changes[0].action, "download")
+
+    def test_remote_instance_id_is_stripped(self):
+        """rclone 1.74 logs a remote as 'name{id}:/path', not 'name:path'.
+
+        Seen against the live Drive: without this the tray's recently-changed
+        list showed 'sinchukss-gdrive{P2dbo}:/file.txt'.
+        """
+        text = (
+            "2026/07/28 13:26:47 INFO  : - Path1  Queue copy to Path2  "
+            "- sinchukss-gdrive{P2dbo}:/notes/todo.md\n"
+            "2026/07/28 13:26:47 INFO  : Bisync successful\n"
+        )
+        result = parse_bisync_output(
+            text, local_prefix="/home/u/GoogleDrive", remote_prefix="sinchukss-gdrive:"
+        )
+        self.assertEqual(result.changes[0].path, "notes/todo.md")
+
+    def test_remote_instance_id_with_subpath(self):
+        text = (
+            "2026/07/28 13:26:47 INFO  : - Path1  Queue copy to Path2  "
+            "- drive{X9}:/Work/deep/b.pdf\n"
+            "2026/07/28 13:26:47 INFO  : Bisync successful\n"
+        )
+        result = parse_bisync_output(text, local_prefix="/l", remote_prefix="drive:Work")
+        self.assertEqual(result.changes[0].path, "deep/b.pdf")
+
+    def test_local_absolute_path_never_treated_as_a_remote(self):
+        text = (
+            "2026/07/28 13:26:47 INFO  : - Path1  Queue delete  - /odd:name/x.txt\n"
+            "2026/07/28 13:26:47 INFO  : Bisync successful\n"
+        )
+        result = parse_bisync_output(text, local_prefix="/l", remote_prefix="d:")
+        self.assertEqual(result.changes[0].path, "/odd:name/x.txt")
 
     def test_unmatched_prefix_left_alone(self):
         text = (

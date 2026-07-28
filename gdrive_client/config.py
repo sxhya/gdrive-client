@@ -39,6 +39,7 @@ RSYNC_EQUIVALENT = {
     "exclude": ("--exclude / --exclude-from", "--filter-from"),
     "max_size": ("--max-size", "--max-size"),
     "preserve_symlinks": ("-l / --links", "--links"),
+    "acknowledge_abuse": ("(none)", "--drive-acknowledge-abuse"),
     "check_access": ("(none)", "bisync --check-access"),
     "resilient": ("(none)", "bisync --resilient"),
     "recover": ("(none)", "bisync --recover"),
@@ -172,6 +173,18 @@ exclude =
 max_size = {max_size}
 # Copy symlinks as symlinks rather than following them.  rsync: -l
 preserve_symlinks = {preserve_symlinks}
+# Download files that Google has flagged as malware or spam.
+#
+# Google's scanner flags a lot of harmless old material -- self-extracting
+# archives, .exe files, .rar/.7z bundles -- and refuses to serve them over the
+# API without this acknowledgement.  With it off, ONE such file makes every
+# sync abort with "Bisync critical error", which leaves the sync permanently
+# stuck asking for a re-baseline.
+#
+# These are your own files, and rclone only writes them to disk; nothing is
+# executed.  Set to false if you would rather such files were skipped, but then
+# also add them to the exclude list above or syncing will keep failing.
+acknowledge_abuse = {acknowledge_abuse}
 
 [ui]
 # How many entries the "Recently changed" tray submenu shows.
@@ -234,6 +247,7 @@ class Config:
     exclude: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))
     max_size: str = ""
     preserve_symlinks: bool = True
+    acknowledge_abuse: bool = True
 
     recent_files_count: int = 10
     show_notifications: bool = True
@@ -378,7 +392,7 @@ class Config:
         ):
             setattr(cfg, opt, get("transfer", opt, getattr(cfg, opt)))
 
-        for opt in ("exclude", "max_size", "preserve_symlinks"):
+        for opt in ("exclude", "max_size", "preserve_symlinks", "acknowledge_abuse"):
             setattr(cfg, opt, get("filters", opt, getattr(cfg, opt)))
 
         for opt in (

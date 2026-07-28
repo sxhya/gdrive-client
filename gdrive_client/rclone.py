@@ -345,6 +345,14 @@ def common_flags(cfg: Config, info: RcloneInfo) -> list[str]:
     if cfg.preserve_symlinks:
         flags.append("--links")
 
+    if cfg.acknowledge_abuse:
+        # Google refuses to serve files its scanner flagged, with HTTP 403
+        # cannotDownloadAbusiveFile.  For bisync that is not a per-file skip: it
+        # escalates to "Bisync critical error", the run aborts before writing its
+        # listings, and every later run then demands a fresh --resync.  One old
+        # .rar in the Drive is enough to wedge syncing permanently.
+        flags.append("--drive-acknowledge-abuse")
+
     if cfg.dry_run:
         flags.append("--dry-run")
 

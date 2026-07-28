@@ -44,11 +44,13 @@ class State(str, Enum):
     NEEDS_RESYNC = "needs-resync"
     SAFETY_ABORT = "safety-abort"
     MISCONFIGURED = "misconfigured"
+    BLOCKED = "blocked"
 
     @property
     def is_problem(self) -> bool:
         return self in (
-            State.ERROR, State.NEEDS_RESYNC, State.SAFETY_ABORT, State.MISCONFIGURED
+            State.ERROR, State.NEEDS_RESYNC, State.SAFETY_ABORT,
+            State.MISCONFIGURED, State.BLOCKED,
         )
 
 
@@ -61,6 +63,7 @@ class Status:
     last_error: str = ""
     next_sync_at: float = 0.0
     pending_conflicts: list[str] = field(default_factory=list)
+    blocked_files: list[str] = field(default_factory=list)
     rclone_version: str = ""
     bisync_experimental: bool = False
 
@@ -111,6 +114,9 @@ class SyncEngine:
             rclone_version=".".join(map(str, info.version)),
             bisync_experimental=not info.bisync_is_stable,
         )
+        # Carry the last successful sync time across restarts, so the tray can
+        # still say "Up to date - 3 min ago" instead of claiming it never ran.
+        self._restore_timestamps()
         self._history: list[Change] = self._load_history()
 
         self._wake = threading.Event()
@@ -218,6 +224,22 @@ class SyncEngine:
             log.debug("could not write status file: %s", exc)
 
     # -------------------------------------------------------------- history
+
+    def _restore_timestamps(self) -> None:
+        """Reload just the timestamps from the previous run's status file.
+
+        Only these fields are restored: a stale *state* would be misleading (the
+        app might have been killed mid-sync and would come back claiming to be
+        syncing), whereas the timestamps remain true across a restart.
+        """
+        try:
+            saved = json.loads(paths.STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        for field_name in ("last_sync_at", "last_success_at"):
+            value = saved.get(field_name)
+            if isinstance(value, (int, float)) and value > 0:
+                setattr(self.status, field_name, float(value))
 
     def _load_history(self) -> list[Change]:
         try:
@@ -353,6 +375,7 @@ class SyncEngine:
             self.status.last_success_at = time.time()
             self.status.last_error = ""
             self.status.pending_conflicts = list(result.conflicts)
+            self.status.blocked_files = []
             # A dry run proves nothing about the baseline, so don't claim one.
             if not self.cfg.dry_run:
                 self._write_baseline_marker()
@@ -382,19 +405,35 @@ class SyncEngine:
                 )
             return
 
-        if result.needs_resync:
+        if result.blocked_files:
+            # Checked before needs_resync on purpose: bisync demands a resync
+            # after any aborted run, but re-baselining cannot help here -- the
+            # next attempt hits the same unreadable files. Telling the user to
+            # re-baseline would just loop them.
             self.status.last_error = result.message
-            self._set_status(
-                State.NEEDS_RESYNC,
-                "Sync needs a one-time re-baseline. Use \"Sync now (rebuild baseline)\".",
-            )
+            self.status.blocked_files = list(result.blocked_files)
+            self._set_status(State.BLOCKED, result.message)
             if self.cfg.notify_on_error:
                 self._notify(
-                    "Google Drive: re-baseline needed",
-                    "The sync state was lost. Choose \"Sync now (rebuild baseline)\" "
-                    "in the tray menu to recover.",
+                    f"Google Drive: {len(result.blocked_files)} file(s) could not be synced",
+                    result.message,
                     urgent=True,
                 )
+            return
+
+        if result.needs_resync:
+            self.status.last_error = result.message
+            if result.listings_lost:
+                message = ("Sync needs a one-time re-baseline. "
+                           "Use \"Sync now (rebuild baseline)\".")
+                body = ("The saved sync state was lost. Choose \"Sync now "
+                        "(rebuild baseline)\" in the tray menu to recover.")
+            else:
+                message = result.message
+                body = result.message
+            self._set_status(State.NEEDS_RESYNC, message)
+            if self.cfg.notify_on_error:
+                self._notify("Google Drive: sync did not finish", body, urgent=True)
             return
 
         self.status.last_error = result.message
