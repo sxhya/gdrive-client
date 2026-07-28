@@ -17,6 +17,31 @@ from .parser import action_label
 log = logging.getLogger(__name__)
 
 
+PROC_NAME = "gdrive-client"
+
+
+def set_process_name(name: str = PROC_NAME) -> None:
+    """Rename the process so it is findable as 'gdrive-client', not 'python3'.
+
+    Without this the kernel comm stays 'python3' and the app's own name appears
+    only in the argument list, so `ps -A | grep gdrive-client`, `pgrep
+    gdrive-client`, `killall gdrive-client` and System Monitor all come up empty
+    while the app is plainly running.
+
+    prctl(PR_SET_NAME) sets the 15-byte comm; 'gdrive-client' is 13 bytes and
+    fits.  Rewriting the full argv would need a third-party module, and comm is
+    what the process-listing tools actually match on.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        buf = ctypes.create_string_buffer(name.encode()[:15])
+        libc.prctl(15, ctypes.byref(buf), 0, 0, 0)   # 15 == PR_SET_NAME
+    except Exception as exc:                          # non-Linux, no libc, ...
+        log.debug("could not set the process name: %s", exc)
+
+
 def daemonize() -> None:
     """Detach from the terminal so the shell prompt returns.
 
@@ -168,9 +193,50 @@ def run_tray(cfg: Config, info: rclone.RcloneInfo) -> int:
 # --------------------------------------------------------------------- the CLI
 
 
+def cmd_stop(_cfg: Config, _info=None) -> int:
+    """Ask a running tray instance to exit."""
+    pid = engine_mod.lock_holder_pid()
+    if pid is None:
+        # Distinguish "nothing running" from "running but the pid is unknown".
+        try:
+            probe = engine_mod._acquire_lock()
+        except engine_mod.AlreadyRunning:
+            print("a gdrive-client is running but did not record its pid; "
+                  "find it with:  ps -A | grep gdrive-client", file=sys.stderr)
+            return 1
+        probe.close()
+        print("no gdrive-client is running.")
+        return 0
+
+    print(f"stopping gdrive-client (pid {pid})…")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        print(f"error: could not signal pid {pid}: {exc}", file=sys.stderr)
+        return 1
+
+    # SIGTERM triggers a graceful shutdown, which waits for any running rclone.
+    for _ in range(60):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            print("stopped.")
+            return 0
+        time.sleep(0.5)
+
+    print(f"pid {pid} is still running after 30s; it may be finishing a sync. "
+          f"Force it with:  kill -9 {pid}", file=sys.stderr)
+    return 1
+
+
 def cmd_status(cfg: Config, info: rclone.RcloneInfo) -> int:
     import json
 
+    holder = engine_mod.lock_holder_pid()
+    if holder:
+        print(f"tray              : running (pid {holder})")
+    else:
+        print("tray              : not running")
     print(f"rclone            : {info}")
     print(f"bisync stable     : {'yes' if info.bisync_is_stable else 'NO (experimental)'}")
     print(f"config            : {CONFIG_PATH}")
@@ -322,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         help="stay attached to the terminal instead of detaching",
     )
     sub.add_parser("status", help="print current status and account info")
+    sub.add_parser("stop", help="stop a running tray instance")
     sub.add_parser("explain", help="show how settings map to rsync/rclone flags")
     sub.add_parser("doctor", help="check the setup and report problems")
 
@@ -332,18 +399,23 @@ def main(argv: list[str] | None = None) -> int:
                         help="show what would happen, change nothing")
 
     args = parser.parse_args(argv)
+    set_process_name()
     setup_logging(args.verbose)
 
     cfg = bootstrap_config()
+    command = args.command or "tray"
 
-    allow_download = args.command != "doctor"
+    # Stopping a running instance must not depend on rclone being usable at all;
+    # a broken or missing binary is one of the reasons to want to stop it.
+    if command == "stop":
+        return cmd_stop(cfg, None)
+
+    allow_download = command != "doctor"
     try:
         info = rclone.resolve(cfg, allow_download=allow_download)
     except rclone.RcloneError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
-
-    command = args.command or "tray"
 
     if command == "tray":
         # Check the lock before forking so a duplicate launch reports on the
@@ -362,7 +434,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.flush()
             sys.stderr.flush()
             daemonize()
-            # Re-open the log handlers on the new fds.
+            # comm does not survive into the forked child, and the log handlers
+            # point at the old fds.
+            set_process_name()
             setup_logging(args.verbose)
             log.info("detached from the terminal (pid %d)", os.getpid())
 

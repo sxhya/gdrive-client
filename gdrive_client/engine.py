@@ -76,20 +76,59 @@ class Status:
 class AlreadyRunning(RuntimeError):
     """Another gdrive-client process holds the sync lock."""
 
+    def __init__(self, message: str, pid: int | None = None):
+        super().__init__(message)
+        self.pid = pid
+
+
+def lock_holder_pid() -> int | None:
+    """Read the pid recorded in the lock file, if it still looks alive."""
+    try:
+        raw = paths.LOCK_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw.isdigit():
+        return None
+    pid = int(raw)
+    try:
+        os.kill(pid, 0)          # signal 0 only tests for existence
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return pid               # exists, owned by someone else
+    return pid
+
 
 def _acquire_lock() -> "object":
-    """Take an exclusive flock so two instances can't bisync the same pair."""
+    """Take an exclusive flock so two instances can't bisync the same pair.
+
+    Opened O_RDWR without O_TRUNC on purpose.  Using open(path, "w") would
+    truncate the file *before* the flock attempt, so a second launch would erase
+    the pid of the instance that legitimately holds the lock and the error
+    message could no longer say which process to look for.  The file is only
+    rewritten once the lock is actually ours.
+    """
     paths.LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(paths.LOCK_FILE, "w")
+    fd = os.open(paths.LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    handle = os.fdopen(fd, "r+")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         handle.close()
+        holder = lock_holder_pid()
+        detail = f", held by pid {holder}" if holder else ""
         raise AlreadyRunning(
-            f"another gdrive-client is already running (lock: {paths.LOCK_FILE})"
+            f"another gdrive-client is already running{detail}.\n"
+            f"  lock file: {paths.LOCK_FILE}\n"
+            f"  stop it with: gdrive-client stop"
+            + (f"   (or: kill {holder})" if holder else ""),
+            pid=holder,
         ) from exc
+    handle.seek(0)
+    handle.truncate()
     handle.write(str(os.getpid()))
     handle.flush()
+    os.fsync(handle.fileno())
     return handle
 
 

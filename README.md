@@ -163,14 +163,22 @@ gdrive-client -f               # run the tray attached to the terminal
 gdrive-client sync             # sync once and exit
 gdrive-client sync --dry-run   # show what would change, change nothing
 gdrive-client sync --resync    # rebuild the baseline
-gdrive-client status           # current state, account, quota
+gdrive-client stop             # stop a running tray instance
+gdrive-client status           # current state, account, quota (incl. whether the tray runs)
 gdrive-client doctor           # check the setup and report problems
 gdrive-client explain          # setting → rsync/rclone flag mapping
 ```
 
 Tray mode detaches from the terminal by default and logs to
 `~/.local/state/gdrive-client/app.log`; pass `-f`/`--foreground` to keep it
-attached. A lock file prevents two instances syncing the same pair at once.
+attached.
+
+A lock file prevents two instances syncing the same pair at once. The running
+process renames itself to `gdrive-client`, so `ps -A | grep gdrive-client`,
+`pgrep gdrive-client` and System Monitor all find it — without that it would
+show up only as `python3`. If a launch is refused, the message names the pid
+holding the lock, and `gdrive-client stop` shuts it down gracefully (it waits
+for any sync in flight).
 
 ---
 
