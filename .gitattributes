@@ -1,0 +1,8 @@
+# This project is Linux-only: shell scripts, Python and desktop entries.
+# CRLF line endings would break the shebang in install.sh and bin/gdrive-client
+# ("bad interpreter: /usr/bin/env bash^M"), so force LF on checkout regardless
+# of any global core.autocrlf setting.
+* text=auto eol=lf
+
+# Keep binary assets byte-exact.
+*.png binary

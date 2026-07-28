@@ -1,0 +1,125 @@
+=== normal run: new/edit/delete both sides + conflict (rclone 1.74.4) ===
+2026/07/28 11:47:40 INFO  : Setting --ignore-listing-checksum as neither --checksum nor --compare checksum are set.
+2026/07/28 11:47:40 INFO  : Bisyncing with Comparison Settings: 
+{
+	"Modtime": true,
+	"Size": true,
+	"Checksum": false,
+	"HashType1": 0,
+	"HashType2": 0,
+	"NoSlowHash": false,
+	"SlowHashSyncOnly": false,
+	"SlowHashDetected": true,
+	"DownloadHash": false
+}
+2026/07/28 11:47:40 INFO  : Synching Path1 "/tmp/pl/local/" with Path2 "/tmp/pl/remote/"
+2026/07/28 11:47:40 INFO  : Building Path1 and Path2 listings
+2026/07/28 11:47:40 INFO  : Path1 checking for diffs
+2026/07/28 11:47:40 INFO  : - Path1             File changed: size (larger)                 - f1.txt
+2026/07/28 11:47:40 INFO  : - Path1             File was deleted                            - f3.txt
+2026/07/28 11:47:40 INFO  : - Path1             File changed: size (larger)                 - f5.txt
+2026/07/28 11:47:40 INFO  : - Path1             File is new                                 - newlocal.txt
+2026/07/28 11:47:40 INFO  : Path1:    4 changes:    1 new,    2 modified,    1 deleted
+2026/07/28 11:47:40 INFO  : (Modified:    2 larger,    0 smaller)
+2026/07/28 11:47:40 INFO  : Path2 checking for diffs
+2026/07/28 11:47:40 INFO  : - Path2             File changed: size (larger)                 - f2.txt
+2026/07/28 11:47:40 INFO  : - Path2             File was deleted                            - f4.txt
+2026/07/28 11:47:40 INFO  : - Path2             File changed: size (larger)                 - f5.txt
+2026/07/28 11:47:40 INFO  : - Path2             File is new                                 - newremote.txt
+2026/07/28 11:47:40 INFO  : Path2:    4 changes:    1 new,    2 modified,    1 deleted
+2026/07/28 11:47:40 INFO  : (Modified:    2 larger,    0 smaller)
+2026/07/28 11:47:40 INFO  : Applying changes
+2026/07/28 11:47:40 INFO  : Checking potential conflicts...
+2026/07/28 11:47:40 ERROR : f5.txt: md5 differ
+2026/07/28 11:47:40 NOTICE: Local file system at /tmp/pl/remote: 1 differences found
+2026/07/28 11:47:40 NOTICE: Local file system at /tmp/pl/remote: 1 errors while checking
+2026/07/28 11:47:40 INFO  : Finished checking the potential conflicts. 1 differences found
+2026/07/28 11:47:40 INFO  : - Path1             Queue copy to Path2                         - /tmp/pl/remote/f1.txt
+2026/07/28 11:47:40 INFO  : - Path2             Queue delete                                - /tmp/pl/remote/f3.txt
+2026/07/28 11:47:40 NOTICE: - WARNING           New or changed in both paths                - f5.txt
+2026/07/28 11:47:40 NOTICE: - Path1             Renaming Path1 copy                         - /tmp/pl/local/f5.txt.path1
+2026/07/28 11:47:40 INFO  : f5.txt: Moved (server-side) to: f5.txt.path1
+2026/07/28 11:47:40 NOTICE: - Path1             Queue copy to Path2                         - /tmp/pl/remote/f5.txt.path1
+2026/07/28 11:47:40 NOTICE: - Path2             Renaming Path2 copy                         - /tmp/pl/remote/f5.txt.path2
+2026/07/28 11:47:40 INFO  : f5.txt: Moved (server-side) to: f5.txt.path2
+2026/07/28 11:47:40 NOTICE: - Path2             Queue copy to Path1                         - /tmp/pl/local/f5.txt.path2
+2026/07/28 11:47:40 INFO  : - Path1             Queue copy to Path2                         - /tmp/pl/remote/newlocal.txt
+2026/07/28 11:47:40 INFO  : - Path2             Queue copy to Path1                         - /tmp/pl/local/f2.txt
+2026/07/28 11:47:40 INFO  : - Path1             Queue delete                                - /tmp/pl/local/f4.txt
+2026/07/28 11:47:40 INFO  : - Path2             Queue copy to Path1                         - /tmp/pl/local/newremote.txt
+2026/07/28 11:47:40 INFO  : - Path2             Do queued copies to                         - Path1
+2026/07/28 11:47:40 INFO  : f5.txt.path2: Copied (new)
+2026/07/28 11:47:40 INFO  : newremote.txt: Copied (new)
+2026/07/28 11:47:40 INFO  : f2.txt: Copied (replaced existing)
+2026/07/28 11:47:40 INFO  : f4.txt: Deleted
+2026/07/28 11:47:40 INFO  : - Path1             Do queued copies to                         - Path2
+2026/07/28 11:47:40 INFO  : f1.txt: Copied (replaced existing)
+2026/07/28 11:47:40 INFO  : f5.txt.path1: Copied (new)
+2026/07/28 11:47:40 INFO  : newlocal.txt: Copied (new)
+2026/07/28 11:47:40 INFO  : f3.txt: Deleted
+2026/07/28 11:47:40 INFO  : Updating listings
+2026/07/28 11:47:40 INFO  : Validating listings for Path1 "/tmp/pl/local/" vs Path2 "/tmp/pl/remote/"
+2026/07/28 11:47:40 INFO  : Bisync successful
+
+=== safety abort: --max-delete 20 exceeded (exit 1) ===
+2026/07/28 11:50:15 INFO  : Setting --ignore-listing-checksum as neither --checksum nor --compare checksum are set.
+2026/07/28 11:50:15 INFO  : Bisyncing with Comparison Settings: 
+{
+	"Modtime": true,
+	"Size": true,
+	"Checksum": false,
+	"HashType1": 0,
+	"HashType2": 0,
+	"NoSlowHash": false,
+	"SlowHashSyncOnly": false,
+	"SlowHashDetected": true,
+	"DownloadHash": false
+}
+2026/07/28 11:50:15 INFO  : Synching Path1 "/tmp/sa/local/" with Path2 "/tmp/sa/remote/"
+2026/07/28 11:50:15 INFO  : Building Path1 and Path2 listings
+2026/07/28 11:50:15 INFO  : Path1 checking for diffs
+2026/07/28 11:50:15 INFO  : - Path1             File was deleted                            - f1.txt
+2026/07/28 11:50:15 INFO  : - Path1             File was deleted                            - f2.txt
+2026/07/28 11:50:15 INFO  : - Path1             File was deleted                            - f3.txt
+2026/07/28 11:50:15 INFO  : - Path1             File was deleted                            - f4.txt
+2026/07/28 11:50:15 INFO  : - Path1             File was deleted                            - f5.txt
+2026/07/28 11:50:15 INFO  : Path1:    5 changes:    0 new,    0 modified,    5 deleted
+2026/07/28 11:50:15 INFO  : Path2 checking for diffs
+2026/07/28 11:50:15 ERROR : Safety abort: too many deletes (>20%, 5 of 6) on Path1 "/tmp/sa/local/". Run with --force if desired.
+2026/07/28 11:50:15 NOTICE: Bisync aborted. Please try again.
+2026/07/28 11:50:15 INFO  : 
+Transferred:   	          0 B / 0 B, -, 0 B/s, ETA -
+Errors:                 1 (retrying may help)
+Checks:                 7 / 7, 100%, Listed 7
+Elapsed time:         0.0s
+
+2026/07/28 11:50:15 NOTICE: Failed to bisync: too many deletes
+
+=== missing prior listings, needs --resync (exit 7) ===
+2026/07/28 11:50:15 INFO  : Setting --ignore-listing-checksum as neither --checksum nor --compare checksum are set.
+2026/07/28 11:50:15 INFO  : Bisyncing with Comparison Settings: 
+{
+	"Modtime": true,
+	"Size": true,
+	"Checksum": false,
+	"HashType1": 0,
+	"HashType2": 0,
+	"NoSlowHash": false,
+	"SlowHashSyncOnly": false,
+	"SlowHashDetected": true,
+	"DownloadHash": false
+}
+2026/07/28 11:50:15 INFO  : Synching Path1 "/tmp/nr/local/" with Path2 "/tmp/nr/remote/"
+2026/07/28 11:50:15 ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings, likely due to critical error on prior run 
+Tip: here are the filenames we were looking for. Do they exist? 
+Path1: /tmp/nr/wd/tmp_nr_local..tmp_nr_remote.path1.lst
+Path2: /tmp/nr/wd/tmp_nr_local..tmp_nr_remote.path2.lst
+Try running this command to inspect the work dir: 
+rclone lsl "/tmp/nr/wd"
+2026/07/28 11:50:15 ERROR : Bisync aborted. Must run --resync to recover.
+2026/07/28 11:50:15 INFO  : 
+Transferred:   	          0 B / 0 B, -, 0 B/s, ETA -
+Errors:                 1 (fatal error encountered)
+Elapsed time:         0.0s
+
+2026/07/28 11:50:15 NOTICE: Failed to bisync: bisync aborted

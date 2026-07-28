@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gdrive-client"
+version = "1.0.0"
+description = "Two-way Google Drive sync client with a tray icon"
+readme = "README.md"
+requires-python = ">=3.9"
+# PyGObject is intentionally not listed: distributions ship it as python3-gi and
+# pip-installing it needs a full GObject build toolchain.  install.sh checks for
+# it instead.  rclone is fetched and checksum-verified at runtime if too old.
+dependencies = []
+
+[project.scripts]
+gdrive-client = "gdrive_client.app:main"
+
+[tool.setuptools]
+packages = ["gdrive_client"]

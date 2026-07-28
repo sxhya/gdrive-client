@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Google Drive client
+GenericName=Google Drive sync
+Comment=Two-way Google Drive sync with a tray icon
+Exec=gdrive-client
+Icon=gdrive-client
+Terminal=false
+Categories=Network;FileTransfer;GTK;
+Keywords=google;drive;sync;cloud;backup;rclone;
+StartupNotify=false
