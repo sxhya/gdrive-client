@@ -86,6 +86,10 @@ _SAFETY_DELETE_HINTS = (
 _SAFETY_ALLCHANGED_HINTS = (
     "all files were changed",
 )
+# Another bisync of the same pair holds the workdir lock.  Stale locks from a
+# killed run are cleared before each sync, so reaching this means a live one.
+_LOCKED_HINT = "prior lock file found"
+
 _SAFETY_HINTS = _SAFETY_DELETE_HINTS + _SAFETY_ALLCHANGED_HINTS + ("Safety abort",)
 
 ACTIONS = ("upload", "download", "delete-local", "delete-remote", "conflict")
@@ -128,6 +132,7 @@ class SyncResult:
     safety_reason: str = ""              # "deletes" | "all-changed" | ""
     file_errors: list[tuple[str, str]] = field(default_factory=list)
     blocked_files: list[str] = field(default_factory=list)   # Google-flagged
+    locked: bool = False                 # another live bisync holds the lock
     message: str = ""
     detected: dict = field(default_factory=dict)   # {"local": {...}, "remote": {...}}
     tail: list[str] = field(default_factory=list)
@@ -229,6 +234,9 @@ def parse_bisync_output(
                 if _ABUSE_MARKER in reason and path not in result.blocked_files:
                     result.blocked_files.append(path)
 
+        if _LOCKED_HINT in body:
+            result.locked = True
+
         if any(hint in body for hint in _SAFETY_HINTS):
             result.safety_abort = True
         if any(hint in body for hint in _SAFETY_DELETE_HINTS):
@@ -274,7 +282,13 @@ def parse_bisync_output(
     result.tail = interesting_tail[-12:]
 
     if not result.message:
-        if result.safety_abort and result.safety_reason == "all-changed":
+        if result.locked:
+            # Nothing ran at all, so none of the other verdicts apply.
+            result.message = (
+                "Skipped: another sync of this folder is still running. "
+                "It will be retried at the next interval."
+            )
+        elif result.safety_abort and result.safety_reason == "all-changed":
             result.message = (
                 "Sync stopped for safety: every tracked file appears to have "
                 "changed at once. Check that the right folder is in place, then "

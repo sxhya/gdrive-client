@@ -115,6 +115,17 @@ class FailurePathTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(result.needs_resync)
 
+    def test_lock_held_by_another_run(self):
+        result = parse_bisync_output(
+            "2026/09/23 17:46:00 NOTICE: Failed to bisync: prior lock file found: "
+            "/w/home_x..remote_.lck \n"
+            "Tip: this indicates that another bisync run (of these same paths) "
+            "either is still running or was interrupted before completion. \n"
+        )
+        self.assertFalse(result.ok)
+        self.assertTrue(result.locked)
+        self.assertIn("still running", result.message)
+
     def test_empty_output_is_not_success(self):
         self.assertFalse(parse_bisync_output("").ok)
 

@@ -7,7 +7,9 @@ which process to look for -- and the lock file read back as empty even though
 the app was running fine.
 """
 
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -142,6 +144,78 @@ class LockTest(unittest.TestCase):
     def test_holder_pid_for_a_live_process(self):
         pid = self.start_holder()
         self.assertEqual(engine.lock_holder_pid(), pid)
+
+
+def _dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    for _ in range(20):
+        try:
+            os.kill(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    return proc.pid
+
+
+class StaleBisyncLockTest(unittest.TestCase):
+    """The bug these pin: an app killed mid-sync left rclone's bisync .lck
+    behind, and since it never expires every later run failed with "prior lock
+    file found" until the file was deleted by hand."""
+
+    def setUp(self):
+        self.workdir = Path(tempfile.mkdtemp(prefix="gdrive-bisync-"))
+        self.lock = self.workdir / "home_x..remote_.lck"
+        self.procs = []
+
+    def tearDown(self):
+        for proc in self.procs:
+            proc.kill()
+            proc.wait()
+        for leftover in self.workdir.iterdir():
+            leftover.unlink()
+        self.workdir.rmdir()
+
+    def write_lock(self, pid) -> None:
+        self.lock.write_text(json.dumps({
+            "Session": str(self.workdir / "home_x..remote_"),
+            "PID": str(pid),
+            "TimeRenewed": "2026-09-23T17:05:12+02:00",
+            "TimeExpires": "2226-08-06T17:05:12+02:00",
+        }), encoding="utf-8")
+
+    def fake_rclone(self) -> int:
+        """A live process whose argv[0] is named rclone."""
+        binary = self.workdir / "rclone"
+        shutil.copy("/bin/sleep", binary)
+        proc = subprocess.Popen([str(binary), "30"])
+        self.procs.append(proc)
+        return proc.pid
+
+    def test_lock_of_a_dead_process_is_removed(self):
+        self.write_lock(_dead_pid())
+        self.assertEqual(engine.clear_stale_bisync_locks(self.workdir), [self.lock])
+        self.assertFalse(self.lock.exists())
+
+    def test_legacy_bare_pid_lock_is_understood(self):
+        self.lock.write_text(str(_dead_pid()), encoding="utf-8")
+        engine.clear_stale_bisync_locks(self.workdir)
+        self.assertFalse(self.lock.exists())
+
+    def test_lock_of_a_live_rclone_is_kept(self):
+        self.write_lock(self.fake_rclone())
+        self.assertEqual(engine.clear_stale_bisync_locks(self.workdir), [])
+        self.assertTrue(self.lock.exists())
+
+    def test_reused_pid_of_another_program_does_not_keep_the_lock(self):
+        self.write_lock(os.getpid())          # alive, but python, not rclone
+        engine.clear_stale_bisync_locks(self.workdir)
+        self.assertFalse(self.lock.exists())
+
+    def test_unreadable_lock_is_left_alone(self):
+        self.lock.write_text("{half-written", encoding="utf-8")
+        engine.clear_stale_bisync_locks(self.workdir)
+        self.assertTrue(self.lock.exists())
 
 
 class ProcessNameTest(unittest.TestCase):

@@ -5,7 +5,10 @@ exercised without touching Google Drive.  These are the tests that pin the
 behaviour the old gdrive script got wrong.
 """
 
+import json
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -259,6 +262,23 @@ class BidirectionalSyncTest(unittest.TestCase):
         self.assertTrue(backups, "the overwritten local file should be recoverable")
         self.assertEqual(backups[0].read_text(), "original")
 
+
+    def test_stale_lock_from_a_killed_run_does_not_block_syncing(self):
+        """An app killed mid-sync used to wedge every later run on bisync's
+        never-expiring lock file."""
+        self.baseline()
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lock = self.workdir / (
+            f"{self.local.as_posix().strip('/').replace('/', '_')}.."
+            f"{self.remote.as_posix().strip('/').replace('/', '_')}.lck"
+        )
+        lock.write_text(json.dumps({"PID": str(dead.pid)}), encoding="utf-8")
+
+        self.write(self.local, "after.txt", "written after the crash")
+        self.run_sync()
+        self.assertEqual((self.remote / "after.txt").read_text(), "written after the crash")
+        self.assertFalse(lock.exists())
 
 @unittest.skipUnless(RCLONE, "needs rclone >= 1.66")
 class PauseAndStateTest(unittest.TestCase):

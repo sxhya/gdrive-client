@@ -132,6 +132,77 @@ def _acquire_lock() -> "object":
     return handle
 
 
+def _is_live_rclone(pid: int) -> bool:
+    """True if pid is a running rclone process.
+
+    Checking the command line, not just existence, matters because pids are
+    reused: after a reboot the recorded pid can easily belong to something
+    unrelated, and that must not keep the lock alive.
+    """
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        # No /proc to consult: fall back to a bare existence test.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+    return "rclone" in os.path.basename(os.fsdecode(argv[0]))
+
+
+def _bisync_lock_pid(lock: Path) -> int | None:
+    """The pid recorded in a bisync .lck file (JSON since 1.66, bare pid before)."""
+    try:
+        raw = lock.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = raw
+    if isinstance(value, dict):
+        value = value.get("PID")
+    value = str(value).strip()
+    return int(value) if value.isdigit() else None
+
+
+def clear_stale_bisync_locks(workdir: Path | None = None) -> list[Path]:
+    """Delete bisync lock files whose owning rclone process is gone.
+
+    bisync writes a .lck file for the duration of a run and removes it on the
+    way out -- unless it never gets there.  If the app is killed mid-sync (a
+    crash, logout, kill -9) rclone dies with it and leaves the lock behind.
+    Without --max-lock that lock never expires, so every later run failed with
+    "prior lock file found" until someone deleted it by hand.
+
+    A lock is only removed when its pid is provably not a running rclone.  A
+    live one is left alone: that is a genuinely concurrent run (e.g.
+    `gdrive-client sync` from a terminal) and the lock is doing its job.  A lock
+    whose pid can't be read is left alone too, rather than guessed at.
+    """
+    workdir = workdir or paths.BISYNC_WORKDIR
+    removed: list[Path] = []
+    for lock in workdir.glob("*.lck"):
+        pid = _bisync_lock_pid(lock)
+        if pid is None or _is_live_rclone(pid):
+            continue
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            log.warning("could not remove stale bisync lock %s: %s", lock, exc)
+            continue
+        log.warning("removed stale bisync lock %s (rclone pid %d is gone)", lock, pid)
+        removed.append(lock)
+    return removed
+
+
 class SyncEngine:
     """Owns the sync loop.  Construct, then call start()."""
 
@@ -482,6 +553,7 @@ class SyncEngine:
 
     def _invoke(self, resync: bool, dry_run: bool = False) -> SyncResult:
         cmd = rclone.bisync_command(self.cfg, self.info, resync=resync, dry_run=dry_run)
+        clear_stale_bisync_locks()
         log.info("running: %s", " ".join(cmd))
 
         collected: list[str] = []
